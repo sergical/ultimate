@@ -163,8 +163,7 @@ export async function prepareHarness(options: HostOptions) {
   if (faux) {
     runtime.registerNativeProvider(faux.provider)
     await runtime.refresh({ allowNetwork: false })
-    // Pi's default model, so every default (the root's, new conversations', automation runs') is the faux one: without
-    // it they take the first model with a login, which a machine's ambient credentials (AWS_PROFILE) made Bedrock.
+    // Pi's default model, so every default (the root's, new conversations', automation runs') is the faux one.
     settings.applyOverrides({
       defaultProvider: faux.getModel().provider,
       defaultModel: faux.getModel().id,
