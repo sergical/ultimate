@@ -106,7 +106,7 @@ folds what was set aside into **N steps set aside · show**.
 - `compact {id, instructions?}` → `{ taskId }` compacts a listed tally root (the palette's Compact on a root).
 - `unlist {id}` → `{ roots }` removes a root that never became a tally and is not the last; its tree's conversations
   leave every tree. Concluding only hides a conversation; unlisting stops a mistaken root being offered to `branch`.
-- `rewindPreview`, `rewind`, `forget` (above); `openEditor` and `talkToUltimate` (the History page).
+- `rewindPreview`, `rewind`, `forget` (above); `editors`, `openEditor` and `talkToUltimate` (the History page).
 
 ## Service and events
 
@@ -133,8 +133,12 @@ tallies and starts coordinator branches. A branch's header and System lanes labe
 no manual creation page.
 
 A root is the project's read-only **History** page, opened from the sidebar's project path. Its composer is replaced by
-one banner, "You're reading the project's history", with **Open in Zed** (`openEditor`: `zeditor` or `zed` on the
-machine Ultimate runs on; hidden on touch devices), a GitHub link when `origin` is there, and **Back to @ultimate**
+one banner, "You're reading the project's history", with **Open in …** (`editors`, `openEditor`; hidden on touch
+devices). It opens the project folder on the machine Ultimate runs on, even from a browser elsewhere, in Zed, Cursor
+or VS Code: the user's `"editor"` (`zed`, `cursor`, `vscode`) in `~/.ultimate/settings.json`, else the first installed
+in that order. On macOS an editor counts as installed by its app (`open -a`), since Cursor's `code` command is not VS
+Code; elsewhere by its command on PATH. With several installed, the button's menu picks one and remembers it; with
+none, the button is hidden. A GitHub link when `origin` is there, and **Back to @ultimate**
 (`talkToUltimate`, like mod+0). Memory lives in the sidebar and the Memory surface; the palette's Compact runs
 `compact`. A root's transcript shows no summary or assessment lines; a genesis reset shows a collapsible **Context
 starts here** card, and old notes and inputs still render quietly.

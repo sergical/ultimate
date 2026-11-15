@@ -14,7 +14,7 @@ import type {
 import type { Context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord/json'
 import { onCommit } from '../../lib/commits.ts'
-import { isMissing, meansNone } from '../../lib/errors.ts'
+import { meansNone } from '../../lib/errors.ts'
 import { awaitWithContext, BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { arr, bool, int, lit, obj, opt, str, union } from '@earendil-works/pi-schema'
 import { strEnum } from '../../lib/schema.ts'
@@ -45,8 +45,16 @@ import type { LandedData } from '../workspaces/api.ts'
 import { Branch, Branched, LineageApi, Rooted, Roots } from './api.ts'
 import { ConversationsApi, Trees } from '../conversations/api.ts'
 import { Standing, Started } from '../subagents/api.ts'
-import { spawn } from 'node:child_process'
-import { CompactAction, ForgetAction, OpenEditorAction, RecentAction, TallyDoc } from './refs.ts'
+import {
+  CompactAction,
+  EditorsAction,
+  ForgetAction,
+  OpenEditorAction,
+  RecentAction,
+  TallyDoc,
+} from './refs.ts'
+import type { Editor } from './refs.ts'
+import { chooseEditor, editors, isEditorId, launch } from './editor.ts'
 import {
   applyMemoryOps,
   BODY_CHARS,
@@ -107,17 +115,6 @@ export const Tally = defineDoc<TallyState>({
 export const docs = [Roots, Branch, Tally, Seen, Memory]
 /** Going back sets a conversation's path aside, and forgetting drops a memory: only the user decides those. */
 export const userActions = ['rewind', 'forget', 'compact', 'openEditor']
-
-/** Starts `editor` on `folder`, detached, once it has spawned; rejects when it is not on PATH. */
-const launch = (editor: string, folder: string) =>
-  new Promise<void>((resolve, reject) => {
-    const child = spawn(editor, [folder], { detached: true, stdio: 'ignore' })
-    child.once('error', reject)
-    child.once('spawn', () => {
-      child.unref()
-      resolve()
-    })
-  })
 
 const ASK_TOKENS = 8192
 
@@ -1242,17 +1239,26 @@ export const actions = {
     }, context)
     return { roots }
   },
-  /** Open the project folder in Zed on this machine: `zeditor` (Arch's name), else `zed`. User-only. */
-  openEditor: implementAction(OpenEditorAction, async (_args, { host }) => {
-    for (const editor of ['zeditor', 'zed'])
-      try {
-        await launch(editor, host.projectRoot)
-        return { editor }
-      } catch (error) {
-        // Not on PATH: try the next name; anything else is a real failure.
-        if (!isMissing(error)) throw error
-      }
-    throw new Error('Zed is not installed on this machine (no zeditor or zed on PATH)')
+  editors: implementAction(EditorsAction, async (_args, { host }) => {
+    const { installed, chosen } = await editors(host.userHome)
+    const editor = ({ id, label }: Editor): Editor => ({ id, label })
+    return { installed: installed.map(editor), chosen: chosen && editor(chosen) }
+  }),
+  /** `{ editor? }`: open the project folder in an editor on this machine, remembering a picked one. User-only. */
+  openEditor: implementAction(OpenEditorAction, async (args, { host }) => {
+    const id = (args as { editor?: unknown } | null)?.editor
+    if (id !== undefined && !isEditorId(id)) throw new Error('editor must be zed, cursor or vscode')
+    const { installed, chosen } = await editors(host.userHome)
+    const editor = id === undefined ? chosen : installed.find((each) => each.id === id)
+    if (!editor)
+      throw new Error(
+        id === undefined
+          ? 'No editor found on this machine: install Zed, Cursor or VS Code'
+          : `${id} is not installed on this machine`,
+      )
+    await launch(editor, host.projectRoot)
+    if (id !== undefined) await chooseEditor(host.userHome, id)
+    return { editor: editor.id }
   }),
   /** `{root, slug}`: delete one memory of root `root`. User-only. */
   forget: implementAction(ForgetAction, async (args, { host }) => {

@@ -3,9 +3,9 @@ import type { ConversationId, EntryId } from '@earendil-works/pi-durable'
 import {
   ArrowLeftIcon,
   BrainIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   CircleCheckIcon,
-  CodeIcon,
   ExternalLinkIcon,
   GitBranchIcon,
   GitForkIcon,
@@ -20,6 +20,13 @@ import type { ReactNode } from 'react'
 import { MentionText, MessageResponse } from '@/components/ai/message'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -40,6 +47,7 @@ import {
   Header,
   Sidebar,
   StatusLine,
+  useAction,
   useConversation,
   useDocOf,
   useNow,
@@ -52,10 +60,11 @@ import { store } from '@/sdk/client'
 import { ConversationRef, Unsummarized } from '../conversations/ui.tsx'
 import { talkToUltimate } from '../subagents/ui.tsx'
 import { Open, useGithubRepo } from '../workspaces/ui.tsx'
-import { ForgetAction, MemoryDoc, OpenEditorAction, TallyDoc } from './refs.ts'
-import type { MemoryItem } from './refs.ts'
+import { EditorsAction, ForgetAction, MemoryDoc, OpenEditorAction, TallyDoc } from './refs.ts'
+import type { EditorId, MemoryItem } from './refs.ts'
 import { MEMORY_FOCUS, MEMORY_SURFACE, MemoryHeader, useRoots } from './ui.tsx'
 import { MemoryCall, NotifyCall, RememberCall } from './calls.tsx'
+import { EditorIcon } from './editor-icons.tsx'
 import { GoBackAction, Rewound, RewoundDependent } from './rewind.tsx'
 
 function userText(entry: EntryRecord) {
@@ -410,22 +419,7 @@ function HistoryBanner({ id, dock }: { id: ConversationId; dock?: boolean }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          {/* Zed opens on the machine Ultimate runs on, so a phone gets only the GitHub link. */}
-          <Button
-            className="pointer-coarse:hidden"
-            onClick={() =>
-              void api
-                .action(OpenEditorAction)
-                .catch((error: unknown) =>
-                  store.notify({ level: 'error', message: errorMessage(error) }),
-                )
-            }
-            title="Open the project folder in Zed, on the machine Ultimate runs on"
-            variant="ghost"
-          >
-            <CodeIcon />
-            Open in Zed
-          </Button>
+          <OpenInEditor />
           {github && (
             <Button asChild size="icon" variant="ghost">
               <a
@@ -450,6 +444,59 @@ function HistoryBanner({ id, dock }: { id: ConversationId; dock?: boolean }) {
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Open the project folder in an editor installed on the machine Ultimate runs on, with a menu to pick another when
+ * several are. It opens there even from a browser elsewhere, so a phone gets only the GitHub link.
+ */
+function OpenInEditor() {
+  const { data, refetch } = useAction(EditorsAction)
+  if (!data?.chosen) return null
+  const { installed, chosen } = data
+  const open = (editor?: EditorId) =>
+    void api
+      .action(OpenEditorAction, editor ? { editor } : {})
+      .then(() => editor && refetch())
+      .catch((error: unknown) => store.notify({ level: 'error', message: errorMessage(error) }))
+  return (
+    <div className="flex items-center pointer-coarse:hidden" data-lineage-editor={chosen.id}>
+      <Button
+        onClick={() => open()}
+        title={`Open the project folder in ${chosen.label} on the machine Ultimate runs on`}
+        variant="ghost"
+      >
+        <EditorIcon id={chosen.id} />
+        Open in {chosen.label}
+      </Button>
+      {installed.length > 1 && (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button aria-label="Choose the editor" className="w-6" size="icon" variant="ghost">
+              <ChevronDownIcon />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4}>
+            <DropdownMenuRadioGroup
+              onValueChange={(value) => open(value as EditorId)}
+              value={chosen.id}
+            >
+              {installed.map((editor) => (
+                <DropdownMenuRadioItem
+                  className="gap-2 text-[13px]"
+                  key={editor.id}
+                  value={editor.id}
+                >
+                  <EditorIcon id={editor.id} />
+                  {editor.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

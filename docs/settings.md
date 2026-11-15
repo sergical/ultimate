@@ -20,7 +20,8 @@ tier, while a core-tier name (`onboarding`, `subagents`, `lineage`, …) is igno
 produce a notice. To skip onboarding on a machine whose user knows Ultimate, set `"onboarding": false` in
 `~/.ultimate/settings.json` (user settings only): no Get ready, no Start here, no setup cards and no "set up git"
 reminder, while the Extensions panel and ⌘K Get ready… stay available and an undecided project setup keeps its
-status-line reminder. Model families (⌘K Model families…, `extensions/models/README.md`) are kept per project in
+status-line reminder. `"editor"` (`zed`, `cursor` or `vscode`, user settings only) picks the editor the History page
+opens the project in; the button's menu sets it (`extensions/lineage/README.md`). Model families (⌘K Model families…, `extensions/models/README.md`) are kept per project in
 `~/.ultimate/model-families.json`, with the most recently saved ones as the start for projects without their own; a
 project's `.ultimate/settings.json` `modelFamilies` is the team's default: it applies over that start, and a person's own families for the project apply over it. `summaryModel` (`"provider/id[:thinking]"`; project over user; without it the
 summaries family's model, by default the tiny family's `openai-codex/gpt-6-luna:low`)
