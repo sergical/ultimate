@@ -6,7 +6,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleCheckIcon,
-  CodeIcon,
   ExternalLinkIcon,
   GitBranchIcon,
   GitForkIcon,
@@ -65,6 +64,7 @@ import { EditorsAction, ForgetAction, MemoryDoc, OpenEditorAction, TallyDoc } fr
 import type { EditorId, MemoryItem } from './refs.ts'
 import { MEMORY_FOCUS, MEMORY_SURFACE, MemoryHeader, useRoots } from './ui.tsx'
 import { MemoryCall, NotifyCall, RememberCall } from './calls.tsx'
+import { EditorIcon } from './editor-icons.tsx'
 import { GoBackAction, Rewound, RewoundDependent } from './rewind.tsx'
 
 function userText(entry: EntryRecord) {
@@ -468,7 +468,7 @@ function OpenInEditor() {
         title={`Open the project folder in ${chosen.label} on the machine Ultimate runs on`}
         variant="ghost"
       >
-        <CodeIcon />
+        <EditorIcon id={chosen.id} />
         Open in {chosen.label}
       </Button>
       {installed.length > 1 && (
@@ -484,7 +484,12 @@ function OpenInEditor() {
               value={chosen.id}
             >
               {installed.map((editor) => (
-                <DropdownMenuRadioItem className="text-[13px]" key={editor.id} value={editor.id}>
+                <DropdownMenuRadioItem
+                  className="gap-2 text-[13px]"
+                  key={editor.id}
+                  value={editor.id}
+                >
+                  <EditorIcon id={editor.id} />
                   {editor.label}
                 </DropdownMenuRadioItem>
               ))}
