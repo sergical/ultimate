@@ -27,10 +27,14 @@ export type Project = {
 export const ListAction = actionRef<null, Project[]>('projects', 'list')
 
 /**
- * `{ root }` → `{ url }`: the folder's Ultimate, started (`ultimate <root> --no-open`) unless it already runs, once it
- * listens. A new folder becomes a project. User-only: agents cannot start processes through it.
+ * `{ root, tailnet? }` → `{ url }`: the folder's Ultimate, started (`ultimate <root> --no-open`) unless it already runs,
+ * once it listens, and with `tailnet` once it is published there too. A new folder becomes a project. User-only:
+ * agents cannot start processes through it.
  */
-export const OpenAction = actionRef<{ root: string }, { url: string }>('projects', 'open')
+export const OpenAction = actionRef<{ root: string; tailnet?: boolean }, { url: string }>(
+  'projects',
+  'open',
+)
 
 /** `{ pinned? }` → whether the rail stays open, shared by every instance on this machine; `pinned` sets it first. */
 export const PinAction = actionRef<{ pinned?: boolean }, { pinned: boolean }>('projects', 'pin')

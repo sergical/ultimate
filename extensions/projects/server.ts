@@ -124,10 +124,8 @@ export async function list(host: ExtensionHost, signal: AbortSignal): Promise<Pr
   )
 }
 
-/** How long `open` waits for a started Ultimate to listen: its supervisor takes the lock and port within seconds. */
 const START_WAIT = 30_000
 
-/** The folder a path names, `~` for the home, refused unless it is an existing directory. */
 async function folderOf(path: unknown) {
   if (typeof path !== 'string' || !path.trim()) throw new Error('root must be a folder path')
   const expanded = path.trim().replace(/^~(?=$|\/)/, homedir())
@@ -139,27 +137,56 @@ async function folderOf(path: unknown) {
   return folder
 }
 
-/** The URL of the Ultimate that holds `home`'s lock and listens, if one does. */
-async function listening(home: string) {
+/** Who holds `home`'s lock, alive, and its URL once it listens. */
+async function lockOwner(home: string) {
   const owner = await readOwner(join(home, 'ultimate.lock')).catch(meansNone)
-  return owner?.port && alive(owner.pid) ? `http://127.0.0.1:${owner.port}` : undefined
+  if (!owner || !alive(owner.pid)) return undefined
+  return { pid: owner.pid, url: owner.port ? `http://127.0.0.1:${owner.port}` : undefined }
 }
 
 /**
- * Start `root`'s Ultimate, the way `ultimate <root>` does from a terminal, unless it already runs, and answer its URL
- * once it listens. It runs in its own process group with none of this server's `ULTIMATE_*` variables, so it outlives
- * this one and owns its own home; on any free port (`--port 0`), so its lock names no port until it listens. What it
- * prints before it is up goes to `<home>/start.log`, which a failure to start quotes.
+ * Waits until a tailnet page can reach the started instance: its Tailscale publication is ready, or there is none to
+ * wait for. A blocked publication fails with its hint.
+ */
+async function published(url: string, root: string, until: number, signal: AbortSignal) {
+  while (Date.now() < until) {
+    const status = (await postAction(
+      { url, label: root },
+      'tailscale',
+      'status',
+      null,
+      signal,
+    ).catch(meansNone)) as { state?: string; hint?: string } | undefined
+    if (status?.state === 'ready') return
+    if (status?.state && status.state !== 'starting')
+      throw new Error(
+        `${root} started, but is not on the tailnet (${status.state})${status.hint ? `: ${status.hint}` : ''}`,
+      )
+    await pace(250, signal)
+  }
+  throw new Error(`${root} started, but did not reach the tailnet within ${START_WAIT / 1000} s`)
+}
+
+/**
+ * Starts `root`'s Ultimate as `ultimate <root>` would, unless it already runs, and answers its URL once it listens; with
+ * `tailnet`, once it is also published there. A start that loses the lock to a concurrent one follows the winner.
  */
 export async function openProject(
   host: Pick<ExtensionHost, 'ultimateRoot' | 'userHome'>,
   path: unknown,
   signal: AbortSignal,
+  tailnet = false,
 ) {
   const root = await folderOf(path)
   const home = projectHome(root, host.userHome)
-  const running = await listening(home)
-  if (running) return { url: running }
+  const until = Date.now() + START_WAIT
+  const ready = async (url: string) => {
+    if (tailnet) await published(url, root, until, signal)
+    return { url }
+  }
+  const running = await lockOwner(home)
+  if (running?.url) return ready(running.url)
+  // The child's home is named, not derived: a preview's user home is not the OS home `bin/ultimate.ts` would hash.
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([name]) => !name.startsWith('ULTIMATE_') || name === 'ULTIMATE_USER_HOME',
@@ -167,14 +194,14 @@ export async function openProject(
   )
   await mkdir(home, { recursive: true })
   const logPath = join(home, 'start.log')
-  const log = await openFile(logPath, 'w')
+  const log = await openFile(logPath, 'a')
   const child = spawn(
     process.execPath,
     [join(host.ultimateRoot, 'bin/ultimate.ts'), root, '--no-open', '--port', '0'],
     {
       cwd: root,
       detached: true,
-      env: { ...env, ULTIMATE_NO_OPEN: '1' },
+      env: { ...env, ULTIMATE_HOME: home, ULTIMATE_NO_OPEN: '1' },
       stdio: ['ignore', log.fd, log.fd],
     },
   )
@@ -183,19 +210,18 @@ export async function openProject(
   child.once('exit', (code) => (exited = code))
   child.once('error', () => (exited = -1))
   await log.close()
-  const failed = async () =>
-    new Error(
-      `Ultimate did not start in ${root}: ${(await readFile(logPath, 'utf8').catch(meansNone))?.trim().slice(-800) || `exit ${exited}`}`,
-    )
-  const until = Date.now() + START_WAIT
+  const printed = async () =>
+    (await readFile(logPath, 'utf8').catch(meansNone))?.trim().slice(-800) || `exit ${exited}`
   while (Date.now() < until) {
-    const url = await listening(home)
-    if (url) return { url }
-    if (exited !== undefined) throw await failed()
+    const owner = await lockOwner(home)
+    if (owner?.url) return ready(owner.url)
+    // A start that lost the lock to a concurrent one exits saying so: the winner is followed until it listens.
+    if (exited !== undefined && !owner && !(await printed()).includes('already running'))
+      throw new Error(`Ultimate did not start in ${root}: ${await printed()}`)
     await pace(200, signal)
   }
   throw new Error(
-    `Ultimate in ${root} did not listen within ${START_WAIT / 1000} s; see ${logPath}`,
+    `Ultimate in ${root} did not listen within ${START_WAIT / 1000} s: ${await printed()}`,
   )
 }
 
@@ -215,18 +241,15 @@ export default function projects(host: ExtensionHost) {
 /** The rail polls both: the trace counts their repeats instead of writing each. */
 export const pollActions = ['list', 'pin']
 
-/** Starting a process is the user's choice: agents reach other projects through `ultimate.tell`, never by starting one. */
+// Starting a process is the user's choice: agents reach other projects through `ultimate.tell`.
 export const userActions = ['open']
 
 export const actions = {
   list: implementAction(ListAction, (_args, { host, signal }) => list(host, signal)),
-  open: implementAction(OpenAction, (args, { host, signal }) =>
-    openProject(
-      host,
-      args && typeof args === 'object' && !Array.isArray(args) ? args.root : undefined,
-      signal,
-    ),
-  ),
+  open: implementAction(OpenAction, (args, { host, signal }) => {
+    const given = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+    return openProject(host, given.root, signal, given.tailnet === true)
+  }),
   pin: implementAction(PinAction, async (args, { host }) => {
     const pinned =
       args && typeof args === 'object' && !Array.isArray(args) ? args.pinned : undefined

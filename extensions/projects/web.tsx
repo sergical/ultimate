@@ -30,6 +30,7 @@ import {
   useExtensions,
   useViewport,
 } from '@/sdk'
+import { store } from '@/sdk/client'
 import { ProjectSwatch, RepoLabel, stemOf } from '../sidebar/ui.tsx'
 import { onLoopback, shownPort, target } from './links.ts'
 import { ListAction, OpenAction, PinAction } from './refs.ts'
@@ -57,21 +58,15 @@ const setOpening = (root: string | undefined, expires = true) => {
   for (const listener of listeners) listener()
 }
 
-/**
- * Open `root`'s Ultimate in this tab: start it unless it runs (the server answers its loopback URL once it listens),
- * then go there. From a page that came over the tailnet a just-started project has no tailnet address yet, so it says
- * so instead of going nowhere. A failure becomes a notice.
- */
-async function go(root: string, url?: string) {
+/** Starts `root`'s Ultimate unless it runs (on a tailnet page, until it is published there too), then goes there. */
+async function go(root: string) {
   setOpening(root, false)
   try {
-    const started = url ?? (await api.action(OpenAction, { root })).url
+    const tailnet = !onLoopback(location)
+    const { url } = await api.action(OpenAction, { root, tailnet })
     const project = (await api.action(ListAction)).find((each) => each.root === root)
-    const href = target(project ?? { name: root, root, url: started, current: false }, location)
-    if (!href)
-      throw new Error(
-        `${prettyName(project?.name ?? root)} started, but is not on the tailnet yet; open it on this machine`,
-      )
+    const href = target(project ?? { name: root, root, url, current: false }, location)
+    if (!href) throw new Error(`${prettyName(project?.name ?? root)} is not on the tailnet`)
     setOpening(root)
     location.assign(href)
   } catch (error) {
@@ -79,6 +74,10 @@ async function go(root: string, url?: string) {
     throw error
   }
 }
+
+/** `go` from a row or menu item, its failure a notice. */
+const goFrom = (root: string) =>
+  go(root).catch((error: unknown) => store.notify({ level: 'error', message: errorMessage(error) }))
 const subscribe = (listener: () => void) => {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -211,7 +210,7 @@ function Row({
         // A stopped project starts first, then this tab goes there.
         if (stopped) {
           event.preventDefault()
-          if (!pending) void go(project.root)
+          if (!pending) void goFrom(project.root)
           return
         }
         // A plain click navigates this tab: mark it. Mod-click and middle-click open another tab and leave this one.
@@ -309,19 +308,17 @@ function RailSkeleton({ wide }: { wide: boolean }) {
   )
 }
 
-/** The Add project dialog's id, opened from the rail and the phone's project menu. */
 const addDialog = 'projects.add'
 
 const input =
   'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 font-mono text-[12.5px] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40'
 
-/** A folder's path, its Ultimate started and this tab sent there; the server refuses a path that is not a folder. */
 function AddProject() {
   const [open, setOpen] = useDialog(addDialog)
   const [path, setPath] = useState('')
   const [error, setError] = useState<string>()
   const busy = useOpening() !== undefined
-  // Only this machine can start a folder: a page over the tailnet would start it where the user cannot see it listen.
+  // A path typed on another device names a folder on that device in the user's mind, not on this machine.
   const local = typeof location === 'undefined' || onLoopback(location)
   const submit = () => {
     setError(undefined)
@@ -374,7 +371,6 @@ function AddProject() {
   )
 }
 
-/** The list both the rail and the phone's menu show; it steps aside, polling nothing, while another rail takes the slot. */
 function useProjects() {
   // Another extension's rail (a fleet switcher, say) takes the slot: two rails side by side would be one too many.
   const other = useExtensions().some(
@@ -384,10 +380,7 @@ function useProjects() {
   return { other, list }
 }
 
-/**
- * On a phone, where there is no rail, the title bar's project chip opens the projects: each one goes there as a rail
- * row does, a stopped one starting first, and the last item adds one. Beyond a phone it is the plain chip.
- */
+/** On a phone, which has no rail, the title bar's project chip opens the projects; beyond a phone it is the plain chip. */
 function PhoneProjects() {
   const phone = useViewport() === 'phone'
   const { other, list } = useProjects()
@@ -417,7 +410,7 @@ function PhoneProjects() {
               disabled={!reachable || pending === project.root}
               key={project.root}
               onSelect={() => {
-                if (!project.current) void go(project.root, project.url)
+                if (!project.current) void goFrom(project.root)
               }}
             >
               <ProjectSwatch
