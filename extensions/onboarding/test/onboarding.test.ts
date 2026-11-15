@@ -10,7 +10,8 @@ import { projectDecision } from '../../../lib/project-setup.ts'
 import { updateSettings } from '../../../lib/settings.ts'
 import { ProjectTrustStore } from '@earendil-works/pi-coding-agent'
 
-it.concurrent('gates project resources, remembers choices, and applies onboarding settings actions live', async () => {
+/** A project with its own setup (an extension, agent, skill and settings) whose first run is not done yet. */
+async function setupProject() {
   const home = await temp('ultimate-onboarding-')
   const project = join(home, 'project')
   const config = join(project, '.ultimate')
@@ -53,18 +54,34 @@ it.concurrent('gates project resources, remembers choices, and applies onboardin
     localSetup: false,
     firstRun: true,
   }
+  return { home, project, projectFile, userFile, options }
+}
+
+/** Onboarding actions and what is loaded, on whichever server `current` returns. */
+function probe(current: () => Awaited<ReturnType<typeof fauxServer>>) {
+  return {
+    action: async (name: string, args: unknown = {}) => {
+      const response = await post(current(), `/api/extensions/onboarding/actions/${name}`, {
+        args,
+      })
+      expect(response.status).toBe(200)
+      return response.data.result
+    },
+    enabled: (name: string) =>
+      current()
+        .extensions.info()
+        .find((entry) => entry.name === name)?.enabled,
+    web: async () => current().web.facets(),
+    tools: async () => (await current().root.agent(context)).tools.map((tool) => tool.name),
+  }
+}
+
+it.concurrent('gates project resources until the local setup is decided', async () => {
+  const { home, project, options } = await setupProject()
   let server: Awaited<ReturnType<typeof fauxServer>> | undefined
   try {
     server = await fauxServer(options)
-    const action = async (name: string, args: unknown = {}) => {
-      const response = await post(server!, `/api/extensions/onboarding/actions/${name}`, { args })
-      expect(response.status).toBe(200)
-      return response.data.result
-    }
-    const enabled = (name: string) =>
-      server!.extensions.info().find((entry) => entry.name === name)?.enabled
-    const web = async () => server!.web.facets()
-    const tools = async () => (await server!.root.agent(context)).tools.map((tool) => tool.name)
+    const { action, enabled, web, tools } = probe(() => server!)
     for (const args of [
       {},
       { extensions: { plan: 'yes' } },
@@ -129,8 +146,20 @@ it.concurrent('gates project resources, remembers choices, and applies onboardin
     expect((await web()).some((path) => path.endsWith('/x/web.tsx'))).toBe(true)
     expect(server.system.current().skills.some((skill) => skill.name === 'local-skill')).toBe(true)
     expect(projectDecision(project, home)).toBe(true)
-    await server.close()
+  } finally {
+    await server?.close()
+    await removeTemp(home)
+  }
+})
+
+it.concurrent('remembers setup choices and applies onboarding settings actions live', async () => {
+  const { home, project, projectFile, userFile, options } = await setupProject()
+  // Decided to use the local setup, as the test above leaves it; reopening below must keep later decisions.
+  new ProjectTrustStore(join(home, '.ultimate')).set(project, true)
+  let server: Awaited<ReturnType<typeof fauxServer>> | undefined
+  try {
     server = await fauxServer(options)
+    const { action, enabled, web, tools } = probe(() => server!)
     expect(server.system.current().project.decision).toBe(true)
     expect(enabled('x')).toBe(true)
     await action('setExtension', { name: 'splash', enabled: false, scope: 'project' })
