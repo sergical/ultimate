@@ -6,7 +6,7 @@ import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
 import { estimateMessageTokens } from '@earendil-works/pi-ai/utils/estimate'
 import { defineTask, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { ConversationId } from '@earendil-works/pi-durable'
-import { afterAll, beforeAll, expect } from 'vitest'
+import { afterAll, expect } from 'vitest'
 import { context } from '../../../server/harness.ts'
 import {
   branchProbe,
@@ -17,19 +17,22 @@ import {
   temp,
 } from '../../../test/helpers.ts'
 
-// Shared by the lineage test files: importing this registers their source fixture and server cleanup.
-let ultimateRoot: string
-beforeAll(async () => {
-  ultimateRoot = await sourceCopy(await temp())
-  await branchProbe(ultimateRoot)
-  await writeFile(
-    join(ultimateRoot, '.ultimate/settings.json'),
-    JSON.stringify({
-      summaryModel: 'unavailable/test',
-      extensions: { enable: ['plan', 'subagents'] },
-    }),
-  )
-})
+// Shared by the lineage test files: their source copy, made by the first fixture, and server cleanup. Not in a
+// `beforeAll`: copying the source takes seconds under load, past the 5 s hook timeout (#1260's landing).
+let source: Promise<string> | undefined
+const sourceRoot = () =>
+  (source ??= (async () => {
+    const root = await sourceCopy(await temp())
+    await branchProbe(root)
+    await writeFile(
+      join(root, '.ultimate/settings.json'),
+      JSON.stringify({
+        summaryModel: 'unavailable/test',
+        extensions: { enable: ['plan', 'subagents'] },
+      }),
+    )
+    return root
+  })())
 
 export type Server = Awaited<ReturnType<typeof fauxServer>>
 export const servers: Server[] = []
@@ -57,7 +60,7 @@ export function section(server: Server, id: ConversationId) {
  */
 export async function fixture(reopen?: string) {
   const home = reopen ?? (await temp('ultimate-lineage-'))
-  const server = await fauxServer({ ultimateRoot, home, userHome: home })
+  const server = await fauxServer({ ultimateRoot: await sourceRoot(), home, userHome: home })
   servers.push(server)
   const requests: Message[][] = []
   const condensed: string[] = []
@@ -123,7 +126,7 @@ export const image = { type: 'image', data: 'aW1n', mimeType: 'image/png' } as c
  */
 export async function notifyFixture(reopen?: string) {
   const home = reopen ?? (await temp('ultimate-lineage-'))
-  const server = await fauxServer({ ultimateRoot, home, userHome: home })
+  const server = await fauxServer({ ultimateRoot: await sourceRoot(), home, userHome: home })
   servers.push(server)
   const hold = Promise.withResolvers<void>()
   const route: FauxResponseFactory = async (transcript, options) => {

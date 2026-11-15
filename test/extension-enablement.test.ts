@@ -243,7 +243,8 @@ const tools = async (server: Awaited<ReturnType<typeof fauxServer>>) =>
   (await server.root.agent(context)).tools.map((tool) => tool.name).toSorted()
 const web = async (server: Awaited<ReturnType<typeof fauxServer>>) => server.web.facets()
 
-it.concurrent('layers settings live, installs and uninstalls tools and web facets, and notices unknown names once', async () => {
+// Not concurrent: alone about 4 s, beside the file's other server boots 13-16 s, past the timeout under the lander's load.
+it('layers settings live, installs and uninstalls tools and web facets, and notices unknown names once', async () => {
   const { home, projectRoot, server } = await fixture()
   const config = join(projectRoot, '.ultimate')
   const settings = join(config, 'settings.json')
