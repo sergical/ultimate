@@ -1,25 +1,40 @@
-// The project switcher (`shell.rail`): every Ultimate running on this machine as a colour swatch at the window's left edge.
-// Hover opens it over the app with names, repositories and ports; pin keeps it open beside the app. A row is a link to that
-// instance's `/`, which opens its @ultimate. It steps aside for any other extension that fills `shell.rail`.
+// The project hub (`shell.rail`): every project Ultimate has opened on this machine as a colour swatch at the window's
+// left edge, a stopped one dimmed. Hover opens it over the app with names, repositories and ports; pin keeps it open
+// beside the app. A row goes to that instance's `/`, which opens its @ultimate, starting it first when it is stopped;
+// Add project starts a new folder's. On phones the title bar's project chip opens the same list. It steps aside for any
+// other extension that fills `shell.rail`.
 import { debounce, deadline, every } from '../../lib/timers.ts'
 import type { Cancel } from '../../lib/timers.ts'
-import { PinIcon, PinOffIcon } from 'lucide-react'
+import { PinIcon, PinOffIcon, PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   api,
   cn,
   defineWebExtension,
+  errorMessage,
   prettyName,
+  ProjectChip,
   keepLast,
   useAction,
+  useDialog,
   useExtensions,
   useViewport,
 } from '@/sdk'
+import { store } from '@/sdk/client'
 import { ProjectSwatch, RepoLabel, stemOf } from '../sidebar/ui.tsx'
-import { shownPort, target } from './links.ts'
-import { ListAction, PinAction } from './refs.ts'
-import type { RunningProject } from './refs.ts'
+import { onLoopback, shownPort, target } from './links.ts'
+import { ListAction, OpenAction, PinAction } from './refs.ts'
+import type { Project } from './refs.ts'
 
 const RAIL = 56
 const WIDE = 272
@@ -28,19 +43,41 @@ const LIVE = 4_000
 const PIN = 30_000
 
 /**
- * The project this tab is navigating to. The old page stays until the new one paints, which takes seconds while the
- * target builds its bundle, so the rail marks the target and a bar runs along the top. A page restored by Back from the
- * browser's cache clears it, and so does a navigation stopped on this page, after 15 s.
+ * The project this tab is navigating to, by its folder. The old page stays until the new one paints, which takes seconds
+ * while a stopped project starts and the target builds its bundle, so the rail marks the target and a bar runs along
+ * the top. A page restored by Back from the browser's cache clears it, and so does a navigation stopped on this page,
+ * after 15 s once it is under way (a start that fails clears it at once).
  */
 let opening: string | undefined
 let cancelExpiry: Cancel | undefined
 const listeners = new Set<() => void>()
-const setOpening = (url: string | undefined) => {
-  opening = url
+const setOpening = (root: string | undefined, expires = true) => {
+  opening = root
   cancelExpiry?.()
-  if (url) cancelExpiry = deadline(15_000, () => setOpening(undefined))
+  if (root && expires) cancelExpiry = deadline(15_000, () => setOpening(undefined))
   for (const listener of listeners) listener()
 }
+
+/** Starts `root`'s Ultimate unless it runs (on a tailnet page, until it is published there too), then goes there. */
+async function go(root: string) {
+  setOpening(root, false)
+  try {
+    const tailnet = !onLoopback(location)
+    const { url } = await api.action(OpenAction, { root, tailnet })
+    const project = (await api.action(ListAction)).find((each) => each.root === root)
+    const href = target(project ?? { name: root, root, url, current: false }, location)
+    if (!href) throw new Error(`${prettyName(project?.name ?? root)} is not on the tailnet`)
+    setOpening(root)
+    location.assign(href)
+  } catch (error) {
+    setOpening(undefined)
+    throw error
+  }
+}
+
+/** `go` from a row or menu item, its failure a notice. */
+const goFrom = (root: string) =>
+  go(root).catch((error: unknown) => store.notify({ level: 'error', message: errorMessage(error) }))
 const subscribe = (listener: () => void) => {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -92,9 +129,9 @@ function usePinned(off: boolean) {
   return [pinned ?? false, set] as const
 }
 
-/** The project's identity under its name: its GitHub repository when known, and its port. */
-function Detail({ project, pending }: { project: RunningProject; pending: boolean }) {
-  if (pending) return <span className="text-brand">opening…</span>
+/** The project's identity under its name: its GitHub repository when known, and its port, or that it is stopped. */
+function Detail({ project, pending }: { project: Project; pending: boolean }) {
+  if (pending) return <span className="text-brand">{project.url ? 'opening…' : 'starting…'}</span>
   return (
     <>
       {project.repo && <RepoLabel className="min-w-0" repo={project.repo} />}
@@ -126,24 +163,27 @@ function Row({
   last,
   family,
 }: {
-  project: RunningProject
+  project: Project
   wide: boolean
   first: boolean
   last: boolean
-  /** Every running project's folder name, for the shades of a family. */
+  /** Every project's folder name, for the shades of a family. */
   family: readonly string[]
 }) {
   const here = project.current
-  const pending = useOpening() === project.url
+  const pending = useOpening() === project.root
   const busy = (project.busy ?? 0) > 0
   const questions = project.questions ?? 0
   const name = prettyName(project.name)
+  const stopped = !project.url
   const href = here ? undefined : target(project, location)
-  const unreachable = !here && !href
+  // A running project the tailnet does not reach; a stopped one is started on click, then reached if it can be.
+  const unreachable = !here && !stopped && !href
   const title = [
     name,
     project.repo?.name,
     shownPort(project, location),
+    stopped && 'click to start',
     unreachable && 'not on the tailnet',
     questions && `${questions} for you`,
     busy && 'working',
@@ -160,23 +200,23 @@ function Row({
         'group relative mx-1.5 flex h-10 items-center rounded-lg text-left outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
         here || unreachable ? 'cursor-default' : 'cursor-pointer',
         unreachable && 'opacity-45',
+        stopped && !pending && 'opacity-60 hover:opacity-100 focus-visible:opacity-100',
         wide && (here ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'),
       )}
       data-project={project.name}
-      href={href}
+      href={href ?? (stopped && !here ? '#' : undefined)}
       onClick={(event) => {
-        // A plain click navigates this tab: mark it. Mod-click and middle-click open another tab and leave this one.
-        if (
-          here ||
-          unreachable ||
-          event.button !== 0 ||
-          event.metaKey ||
-          event.ctrlKey ||
-          event.shiftKey ||
-          event.altKey
-        )
+        if (here || unreachable) return
+        // A stopped project starts first, then this tab goes there.
+        if (stopped) {
+          event.preventDefault()
+          if (!pending) void goFrom(project.root)
           return
-        setOpening(project.url)
+        }
+        // A plain click navigates this tab: mark it. Mod-click and middle-click open another tab and leave this one.
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          return
+        setOpening(project.root)
       }}
       title={title}
     >
@@ -201,7 +241,11 @@ function Row({
           <ProjectSwatch
             className={cn(
               'h-full transition-[width,opacity] duration-150',
-              here || pending ? 'w-5' : 'w-3 opacity-70 group-hover:w-4 group-hover:opacity-100',
+              here || pending
+                ? 'w-5'
+                : stopped
+                  ? 'w-3 opacity-40 group-hover:w-4 group-hover:opacity-100'
+                  : 'w-3 opacity-70 group-hover:w-4 group-hover:opacity-100',
               // The project this tab shows: a ring set off from its swatch, clear on a purple one too.
               here && 'outline-1 outline-offset-2 outline-foreground/45',
               first ? 'rounded-t-md' : 'rounded-t-[1px]',
@@ -264,14 +308,151 @@ function RailSkeleton({ wide }: { wide: boolean }) {
   )
 }
 
-function Rail() {
-  const viewport = useViewport()
+const addDialog = 'projects.add'
+
+const input =
+  'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 font-mono text-[12.5px] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40'
+
+function AddProject() {
+  const [open, setOpen] = useDialog(addDialog)
+  const [path, setPath] = useState('')
+  const [error, setError] = useState<string>()
+  const busy = useOpening() !== undefined
+  // A path typed on another device names a folder on that device in the user's mind, not on this machine.
+  const local = typeof location === 'undefined' || onLoopback(location)
+  const submit = () => {
+    setError(undefined)
+    go(path.trim()).catch((failure: unknown) => setError(errorMessage(failure)))
+  }
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogContent className="gap-3 sm:max-w-md">
+        <DialogTitle className="text-[15px]">Add project</DialogTitle>
+        <DialogDescription className="text-[13px]">
+          Starts Ultimate in a folder on this machine and opens its @ultimate. The folder gets its
+          own process, state and trust decision, like running{' '}
+          <code className="font-mono">ultimate</code> in it.
+        </DialogDescription>
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (path.trim() && !busy) submit()
+          }}
+        >
+          <input
+            aria-label="Folder path"
+            autoComplete="off"
+            autoFocus
+            className={input}
+            disabled={!local}
+            onChange={(event) => setPath(event.target.value)}
+            placeholder="~/Projects/my-app"
+            spellCheck={false}
+            value={path}
+          />
+          {!local && (
+            <p className="text-[12px] text-muted-foreground">
+              Add a project from a window on this machine.
+            </p>
+          )}
+          {error && <p className="text-[12px] break-words text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setOpen(false)} size="sm" type="button" variant="ghost">
+              Cancel
+            </Button>
+            <Button disabled={!local || !path.trim() || busy} size="sm" type="submit">
+              {busy ? 'Starting…' : 'Start'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function useProjects() {
   // Another extension's rail (a fleet switcher, say) takes the slot: two rails side by side would be one too many.
   const other = useExtensions().some(
     (record) => record.name !== 'projects' && record.extension?.slots?.['shell.rail'],
   )
   const list = useAction(ListAction, null, { onError: keepLast, enabled: !other })
+  return { other, list }
+}
+
+/** On a phone, which has no rail, the title bar's project chip opens the projects; beyond a phone it is the plain chip. */
+function PhoneProjects() {
+  const phone = useViewport() === 'phone'
+  const { other, list } = useProjects()
+  const pending = useOpening()
+  const [, setAdding] = useDialog(addDialog)
+  if (!phone || other) return <ProjectChip />
+  const projects = list.data ?? []
+  const family = projects.map((project) => project.name)
+  return (
+    // Asked again each time it opens: without a rail nothing polls the list on a phone.
+    <DropdownMenu modal={false} onOpenChange={(open) => open && void list.refetch()}>
+      <DropdownMenuTrigger asChild>
+        <ProjectChip aria-label="Switch project" data-ui="project-menu" menu />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72" sideOffset={4}>
+        <DropdownMenuLabel className="px-2 pt-1 pb-1.5 section-label">Projects</DropdownMenuLabel>
+        {!list.data && (
+          <p className="px-2 py-1.5 font-mono text-[11px] text-muted-foreground">Loading…</p>
+        )}
+        {projects.map((project) => {
+          const questions = project.questions ?? 0
+          const reachable = project.current || !project.url || target(project, location)
+          return (
+            <DropdownMenuItem
+              className="gap-2.5 py-1.5"
+              data-project={project.name}
+              disabled={!reachable || pending === project.root}
+              key={project.root}
+              onSelect={() => {
+                if (!project.current) void goFrom(project.root)
+              }}
+            >
+              <ProjectSwatch
+                className={cn('h-6 w-1.5 rounded-sm', !project.url && 'opacity-40')}
+                family={family}
+                folder={project.name}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn('truncate text-[13px]', project.current && 'font-semibold')}>
+                  {prettyName(project.name)}
+                </span>
+                <span className="truncate font-mono text-[10px] text-muted-foreground">
+                  {pending === project.root
+                    ? project.url
+                      ? 'opening…'
+                      : 'starting…'
+                    : project.current
+                      ? 'this tab'
+                      : shownPort(project, location)}
+                </span>
+              </span>
+              <State busy={(project.busy ?? 0) > 0} questions={questions} />
+            </DropdownMenuItem>
+          )
+        })}
+        <DropdownMenuItem
+          className="gap-2.5 py-1.5 text-[13px] text-muted-foreground"
+          onSelect={() => setAdding(true)}
+        >
+          <PlusIcon className="size-3.5" />
+          Add project…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function Rail() {
+  const viewport = useViewport()
+  const { other, list } = useProjects()
   usePoll(list.refetch, LIVE, other)
+  const [, setAdding] = useDialog(addDialog)
   const [hover, setHover] = useState(false)
   const [pinned, setPinned] = usePinned(other)
   const [showHover] = useState(() => debounce(150, () => setHover(true)))
@@ -280,7 +461,7 @@ function Rail() {
   const loading = !list.data && !list.error
   // A list that arrives after the skeleton fades in over it; one already there on mount just shows.
   const waited = useRef(loading).current
-  // On phones, like the shell's other rails; and with only this project running there is nothing to switch to.
+  // On phones, like the shell's other rails; and with only this project there is nothing to switch to (⌘K adds one).
   if (other || viewport === 'phone' || (!loading && projects.length < 2)) return null
 
   const wide = hover || pinned
@@ -343,11 +524,28 @@ function Rail() {
               const first = index === 0 || stemOf(projects[index - 1].name) !== stem
               const last = stemOf(projects[index + 1]?.name ?? '') !== stem
               return (
-                <div className={cn(first && index > 0 && 'mt-2')} key={project.url}>
+                <div className={cn(first && index > 0 && 'mt-2')} key={project.root}>
                   <Row family={family} first={first} last={last} project={project} wide={wide} />
                 </div>
               )
             })}
+            {!loading && (
+              <button
+                aria-label="Add project"
+                className={cn(
+                  'group mx-1.5 mt-2 flex h-8 cursor-pointer items-center rounded-lg text-muted-foreground/60 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+                  wide && 'hover:bg-sidebar-accent/50',
+                )}
+                onClick={() => setAdding(true)}
+                title="Add project: start Ultimate in another folder"
+                type="button"
+              >
+                <span className="flex w-11 shrink-0 justify-center">
+                  <PlusIcon className="size-3.5" />
+                </span>
+                {wide && <span className="pl-1.5 text-[13px]">Add project…</span>}
+              </button>
+            )}
           </div>
         </div>
         {/* Same height and border as the status line beside it (core primitives.tsx), so the two read as one line. */}
@@ -370,5 +568,17 @@ function Rail() {
 }
 
 export default defineWebExtension({
-  slots: { 'shell.rail': Rail, overlay: OpeningBar },
+  slots: {
+    'shell.rail': Rail,
+    'titlebar.project': PhoneProjects,
+    overlay: [OpeningBar, AddProject],
+  },
+  commands: [
+    {
+      id: 'projects.add',
+      title: 'Add project…',
+      group: 'Projects',
+      run: (context) => context.open(addDialog),
+    },
+  ],
 })
