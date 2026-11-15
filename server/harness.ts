@@ -163,14 +163,17 @@ export async function prepareHarness(options: HostOptions) {
   if (faux) {
     runtime.registerNativeProvider(faux.provider)
     await runtime.refresh({ allowNetwork: false })
+    // Pi's default model, so every default (the root's, new conversations', automation runs') is the faux one: without
+    // it they take the first model with a login, which a machine's ambient credentials (AWS_PROFILE) made Bedrock.
+    settings.applyOverrides({
+      defaultProvider: faux.getModel().provider,
+      defaultModel: faux.getModel().id,
+    })
   }
   /** The default model and thinking level, read when the harness opens, after extensions registered theirs. */
   const preferred = async () => {
     const family = (await readFamilies(userHome, projectRoot)).families.default
-    const agent = defaultAgent(await modelRuntime.getAvailable(), settings, family)
-    return faux
-      ? { ...agent, model: { provider: faux.getModel().provider, modelId: faux.getModel().id } }
-      : agent
+    return defaultAgent(await modelRuntime.getAvailable(), settings, family)
   }
   let active:
     | {
