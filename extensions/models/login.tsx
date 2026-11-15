@@ -513,7 +513,6 @@ function Chooser({
               </button>
               {label ? (
                 <>
-                  <span className="shrink-0 text-[11px] text-success/90">✓ {label}</span>
                   {method.provider.status.source === 'stored' && (
                     <Button
                       className="-my-1 hidden h-6 gap-1 px-1.5 text-[11px] text-muted-foreground group-focus-within/row:inline-flex group-hover/row:inline-flex pointer-coarse:inline-flex"
@@ -527,6 +526,7 @@ function Chooser({
                       log out
                     </Button>
                   )}
+                  <span className="shrink-0 text-[11px] text-success/90">✓ {label}</span>
                 </>
               ) : (
                 <span className="shrink-0 text-[11px] text-muted-foreground/50">
