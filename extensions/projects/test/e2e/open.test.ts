@@ -24,8 +24,8 @@ afterEach(async () => {
 it('starts a folder once for two concurrent opens, in the home of the given user home, and answers both with its URL', async () => {
   const userHome = await temp('ultimate-open-')
   const root = await temp('ultimate-open-project-')
-  // The child's own user config and logins stay in the temporary home.
-  vi.stubEnv('HOME', userHome)
+  // A preview's user home differs from the OS home the supervisor would hash: the lock must land under the user home.
+  vi.stubEnv('HOME', await temp('ultimate-open-os-'))
   vi.stubEnv('ULTIMATE_USER_HOME', userHome)
   const host = { ultimateRoot: resolve('.'), userHome }
   const signal = new AbortController().signal
