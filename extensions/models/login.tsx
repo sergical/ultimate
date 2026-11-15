@@ -516,7 +516,7 @@ function Chooser({
                   <span className="shrink-0 text-[11px] text-success/90">✓ {label}</span>
                   {method.provider.status.source === 'stored' && (
                     <Button
-                      className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+                      className="hidden h-6 gap-1 px-1.5 text-[11px] text-muted-foreground group-focus-within/row:inline-flex group-hover/row:inline-flex pointer-coarse:inline-flex"
                       disabled={busy === method.provider.id}
                       onClick={() => setConfirming(row)}
                       size="sm"
