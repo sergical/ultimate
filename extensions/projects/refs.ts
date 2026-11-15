@@ -1,10 +1,13 @@
-/** Projects in the browser: the Ultimate instances running on this machine, for the rail. Browser-safe. */
+/** Projects in the browser: every project Ultimate has opened on this machine, running or not, for the rail. Browser-safe. */
 import { actionRef } from '../../shared/extension-api.ts'
 
-/** One running instance: its project's name, its loopback URL, and its live state when it answered. */
-export type RunningProject = {
+/** One project: its name and folder, and while it runs its loopback URL and its live state when it answered. */
+export type Project = {
   name: string
-  url: string
+  /** Its folder. */
+  root: string
+  /** Its loopback address while an Ultimate runs it; absent while it is stopped. */
+  url?: string
   /** The instance this page shows. */
   current: boolean
   /**
@@ -20,8 +23,14 @@ export type RunningProject = {
   tailnetPort?: number
 }
 
-/** No arguments → every running instance on this machine, this one included, in project order. */
-export const ListAction = actionRef<null, RunningProject[]>('projects', 'list')
+/** No arguments → every project on this machine, this one included, running or stopped, in project order. */
+export const ListAction = actionRef<null, Project[]>('projects', 'list')
+
+/**
+ * `{ root }` → `{ url }`: the folder's Ultimate, started (`ultimate <root> --no-open`) unless it already runs, once it
+ * listens. A new folder becomes a project. User-only: agents cannot start processes through it.
+ */
+export const OpenAction = actionRef<{ root: string }, { url: string }>('projects', 'open')
 
 /** `{ pinned? }` → whether the rail stays open, shared by every instance on this machine; `pinned` sets it first. */
 export const PinAction = actionRef<{ pinned?: boolean }, { pinned: boolean }>('projects', 'pin')
