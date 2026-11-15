@@ -46,11 +46,25 @@ export const RecentAction = actionRef<
   { id: ConversationId; limit?: number; types?: RootEvent['type'][] },
   RootEvent[]
 >('lineage', 'recent')
+export type EditorId = 'zed' | 'cursor' | 'vscode'
+/** An editor installed on the machine Ultimate runs on, and its name for the button. */
+export type Editor = { id: EditorId; label: string }
 /**
- * No arguments → opens the project folder in Zed on the machine Ultimate runs on (`zeditor`, else `zed`, on PATH).
- * Refused when neither is installed. User-only.
+ * No arguments → the editors installed on the machine Ultimate runs on (Zed, Cursor, VS Code, in that order) and
+ * `chosen`, the one `openEditor` uses: the user's `editor` setting when installed, else the first installed.
  */
-export const OpenEditorAction = actionRef<null, { editor: string }>('lineage', 'openEditor')
+export const EditorsAction = actionRef<null, { installed: Editor[]; chosen?: Editor }>(
+  'lineage',
+  'editors',
+)
+/**
+ * `{ editor? }` → opens the project folder in `editor` on the machine Ultimate runs on and remembers it in the user's
+ * settings; without it, in the chosen editor. Refused when it is not installed. User-only.
+ */
+export const OpenEditorAction = actionRef<{ editor?: EditorId }, { editor: EditorId }>(
+  'lineage',
+  'openEditor',
+)
 /** `{ id, instructions? }` → `{ taskId }`: compact root `id`'s tally, for its history footer and the palette. */
 export const CompactAction = actionRef<
   { id: ConversationId; instructions?: string },
