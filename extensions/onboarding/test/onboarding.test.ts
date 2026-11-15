@@ -152,7 +152,9 @@ it.concurrent('gates project resources until the local setup is decided', async 
   }
 })
 
-it.concurrent('remembers setup choices and applies onboarding settings actions live', async () => {
+// Not concurrent: its two server boots and many live reloads alone take most of the file's time, and sharing the worker
+// with the other boots tripled it, past the timeout under the lander's load.
+it('remembers setup choices and applies onboarding settings actions live', async () => {
   const { home, project, projectFile, userFile, options } = await setupProject()
   // Decided to use the local setup, as the test above leaves it; reopening below must keep later decisions.
   new ProjectTrustStore(join(home, '.ultimate')).set(project, true)
